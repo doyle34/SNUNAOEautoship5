@@ -34,15 +34,17 @@ int cds_val[3];
 int count = 0;
 int dist_crit = 120; // critical distance
 int brightlim = 400;
+int state[3] = {0, 0, 0}; // previous, current, next state
+// -1: left, 0:straight, 1:right
 
 float euler = 0;      // euler is EBimu sensor value. range = (-180, 180)
 float euler_init = 0; // indicates euler angle when ship starts operating
-float yaw = 0;        // yaw is measured w.r.t euler_init. range = (-180, 180)
+float yaw = 0;        // this variable should be ALWAYS measured w.r.t euler_init. range = (-180, 180)
 float yaw_target = 0; // temporal yaw value used when turning
 
 Servo servo;
 SoftwareSerial BTSerial(BT_TX_PIN, BT_RX_PIN);
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+//LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 SimpleTimer timer;
 
@@ -63,11 +65,9 @@ void sendValues(SoftwareSerial s);
 void setup() {
   Serial.begin(BAUD_RATE);
   servo.attach(RUDDER_PIN);
-  servo.write(91);
+  servo.write(ZERO_RUDDER_ANGLE);
   BTSerial.begin(BT_BAUD_RATE);
   Serial3.begin(BAUD_RATE);
-  lcd.begin();
-  lcd.backlight();
 
   for (int i = 0; i < 3; i++) {
     pinMode(TRIG_PIN[i], OUTPUT);
@@ -87,8 +87,6 @@ void setup() {
   goForward();
   delay(500);
 
-  delay(500);
-
   timer.setInterval(100, updateSensorValues);
 }
 
@@ -96,113 +94,130 @@ void loop() {
   timer.run();
 
   yaw = getYaw(euler_init);
+  BTSerial.print("current state: ");
+  BTSerial.print(state[1]);
 
-  // 오른쪽으로 돌아야 하는 상황 가정
-  if (/* nextstepturnright == True*/) {
+  // state change detection
+
+  if (state[0] == 0 && state[1] == 1) {
     yaw_target = addAngle(yaw, 90); // target yaw를 현재 yaw + 90으로 지정
-    // bool isTurningRight = True;
   }
 
-  if (/*isTurningRight == True*/) {
-    turnRight(yaw_target); // 오른쪽으로 쬐끔 돈다
-  }
-
-  if (/* nextstepturnleft == True*/) {
+  if (state[0] == 0 && state[1] == -1) {
     yaw_target = addAngle(yaw, -90);
   }
 
-  if (/*isTurningRight == True*/) {
-    turnLeft(yaw_target); // 왼쪽으로 쬐끔 돈다
+  // navigate based on current state
+
+  if (state[0] == -1 && state[1] == -1) {
+    turnLeft(yaw_target);
   }
 
-  switch (count) {
-  case 0:
-    if (distance[1] < distancelim) {
-      turnLeft();
-      count++;
-    }
-    break;
-  case 1:
-    if (distance[0] > 100 || distance[1] < 120) {
-      turnRight();
-      count++;
-    }
-    break;
-  case 2:
-    if (distance[0] > 100 || distance[1] < 120) {
-      turnRight(); //대충 우회전 하라는 뜻
-      count++;
-    }
-    break;
-  case 3:
-    if (distance[2] > 120 || distance[1] < 120) {
-      turnLeft(); //대충 좌횟=전 하라는뜻
-      count++;
-    }
-    break;
-  case 4:
-    if (distance[1] < distancelim) {
-      turnLeft(); //좌회전
-      count++;
-    }
-    break;
-  case 5:
-    if (distance[0] > 100 || distance[1] < 120) {
-      turnRight(); //우회전
-      count++;
-    }
-    break;
-  case 6:
-    if (distance[0] > 100 || distance[1] < 120) {
-      turnRight(); //대충 우회전 하라는 뜻
-      count++;
-    }
-    break;
-  case 7:
-    if (distance[2] > 120 || distance[1] < 120) {
-      turnLeft();
-      count++;
-    }
-
-    break;
+  if (state[0] == 1 && state[1] == 1) {
+    turnRight(yaw_target);
   }
-  goForward();
+
+  if (state[1] == 0) {
+    goForward();
+  }
+
+  // evaluate & set next state
+
+  if (abs(yaw_target - yaw) < 2)) {
+      state[2] = 0;
+      yaw_target = yaw;
+    }
+  else if (state[1] == -1) {
+    state[2] = -1;
+  } else if (state[1] == 1) {
+    state[2] = 1;
+  }
+
+  if (state[1] == 0) {
+    switch (count) {
+    case 0:
+      if (distance[1] < dist_crit) {
+        state[2] = -1;
+        count++;
+      }
+      break;
+    case 1:
+      if (distance[0] > dist_crit || distance[1] < dist_crit) {
+        state[2] = 1;
+        count++;
+      }
+      break;
+    case 2:
+      if (distance[0] > dist_crit || distance[1] < dist_crit) {
+        state[2] = 1;
+        count++;
+      }
+      break;
+    case 3:
+      if (distance[2] > dist_crit || distance[1] < dist_crit) {
+        state[2] = -1;
+        count++;
+      }
+      break;
+    case 4:
+      if (distance[1] < dist_crit) {
+        state[2] = -1;
+        count++;
+      }
+      break;
+    case 5:
+      if (distance[0] > dist_crit || distance[1] < dist_crit) {
+        state[2] = 1;
+        count++;
+      }
+      break;
+    case 6:
+      if (distance[0] > dist_crit || distance[1] < dist_crit) {
+        state[2] = 1;
+        count++;
+      }
+      break;
+    case 7:
+      if (distance[2] > dist_crit || distance[1] < dist_crit) {
+        state[2] = -1;
+        count++;
+      }
+      break;
+    }
+  }
+
+  // state update
+  state[0] = state[1];
+  state[1] = state[2];
+
   delay(100);
 }
 
 void goForward() {
   analogWrite(RPWM, speed);
   analogWrite(LPWM, 0);
-  servo.attach(RUDDER_PIN);
-  servo.write(Initial_Angle);
-  delay(300);
-  servo.detach();
+  setRudderAngle(ZERO_RUDDER_ANGLE);
 }
 
 void goBackward() {
   analogWrite(RPWM, 0);
   analogWrite(LPWM, speed);
-  servo.attach(RUDDER_PIN);
-  servo.write(Initial_Angle);
-  delay(300);
-  servo.detach();
+  setRudderAngle(ZERO_RUDDER_ANGLE);
 }
 
 void motorStop() {
   analogWrite(RPWM, 0);
   analogWrite(LPWM, 0);
-  servo.attach(RUDDER_PIN);
-  servo.write(91);
-  delay(300);
-  servo.detach();
+  setRudderAngle(ZERO_RUDDER_ANGLE);
 }
 
 void setRudderAngle(int angle) {
-  //
   int rem = angle % 3;
   int mod_angle;
-  if (rem == 1) mod_angle = angle - 1;
-  if (rem == 2) mod_angle = angle + 1;
+  if (rem == 1)
+    mod_angle = angle - 1;
+  if (rem == 2)
+    mod_angle = angle + 1;
   servo.attach(RUDDER_PIN);
   servo.write(mod_angle);
 }
@@ -228,16 +243,18 @@ void setInitEuler() {
   euler_init = temp * 0.1; // mean of first 10 values
 }
 
-float getYaw(float ref_angle) { /*
-                                calculate yaw angle w.r.t ref_angle
-                                if ref_angle == euler_init,
-                                  return ordinary yaw (relative direction w.r.t
-                                initial direction) if ref_angle == yaw_temp,
-                                  return yaw for rotation (which will be
-                                iterated until yaw == -90 or +90)
+float getYaw(float ref_angle) {
+  /*
+  calculate yaw angle w.r.t ref_angle
+  if ref_angle == euler_init,
+    return ordinary yaw (relative direction w.r.t
+  initial direction)
+  if ref_angle == yaw_temp,
+    return yaw for rotation (which will be
+  iterated until yaw == -90 or +90)
 
-                                ALWAYS RETURN VALUES BETWEEN (-180, 180)
-                                */
+  ALWAYS RETURN VALUES BETWEEN (-180, 180)
+  */
   yaw = euler - ref_angle;
   if (yaw > 180)
     yaw -= 360;
@@ -257,7 +274,6 @@ float addAngle(float angle1, float angle2) {
 
 void turnRight(float yaw_target) // turn until yaw is 90
 {
-  // yaw = getYaw(euler_init); // turn 시작 전 현재 yaw
   yaw_temp = getYaw(yaw_target); // 목표 yaw 기준 좌표계 재정의
   delta_yaw = addAngle(yaw_target, -yaw_temp);
 
@@ -270,7 +286,7 @@ void turnRight(float yaw_target) // turn until yaw is 90
 
 void turnLeft(float yaw_target) {
   yaw_temp = getYaw(yaw_target); // 목표 yaw 기준 좌표계 재정의
-      delta_yaw = addAngle(yaw_target, -yaw_temp);
+  delta_yaw = addAngle(yaw_target, -yaw_temp);
 
     int angle = int(
       - (LEFT_RUDDER_ANGLE_MAX - ZERO_RUDDER_ANGLE)
